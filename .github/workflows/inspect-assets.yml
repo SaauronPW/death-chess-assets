@@ -1,1 +1,79 @@
-{}
+name: Inspect Death Chess Assets
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - 'death chess.zip'
+      - '.github/workflows/inspect-assets.yml'
+jobs:
+  inspect:
+    name: Inspect and thumbnail assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install unzip and ImageMagick
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip imagemagick zip
+      - name: Unzip assets
+        run: |
+          mkdir -p unpacked
+          if [ -f "death chess.zip" ]; then
+            unzip -o "death chess.zip" -d unpacked
+          else
+            echo "death chess.zip not found in repo root" && exit 1
+          fi
+      - name: Find image files
+        run: |
+          find unpacked -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.svg' \) -print > found-files.txt || true
+          echo "Found files:" && cat found-files.txt || true
+      - name: Generate thumbnails (256x256)
+        run: |
+          mkdir -p thumbnails
+          if [ -s found-files.txt ]; then
+            while IFS= read -r f; do
+              base=$(basename "$f")
+              ext="${base##*.}"
+              dest="thumbnails/${base%.*}.png"
+              if [[ "${ext,,}" == "svg" ]]; then
+                convert -background none "$f" -resize 256x256 "$dest" || echo "convert failed for $f"
+              else
+                convert "$f" -resize 256x256 "$dest" || echo "convert failed for $f"
+              fi
+            done < found-files.txt
+          else
+            echo "No image files found to thumbnail"
+          fi
+      - name: Create file list CSV
+        run: |
+          echo "file,size,format,width,height,frames" > file-list.csv
+          if [ -s found-files.txt ]; then
+            while IFS= read -r f; do
+              fn="${f#unpacked/}"
+              size=$(stat -c%s "$f" 2>/dev/null || echo 0)
+              info=$(identify -format "%m %w %h %[n]" "$f" 2>/dev/null || echo "UNKNOWN 0 0 1")
+              format=$(echo $info | awk '{print $1}')
+              width=$(echo $info | awk '{print $2}')
+              height=$(echo $info | awk '{print $3}')
+              frames=$(echo $info | awk '{print $4}')
+              echo "$fn,$size,$format,$width,$height,$frames" >> file-list.csv
+            done < found-files.txt
+          fi
+      - name: Zip thumbnails
+        run: |
+          if [ -d thumbnails ]; then
+            zip -r thumbnails.zip thumbnails || true
+          else
+            echo "No thumbnails to zip"
+          fi
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: thumbnails
+          path: thumbnails.zip
+      - name: Upload file list
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-list
+          path: file-list.csv
