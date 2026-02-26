@@ -1,1 +1,1 @@
-# death-chess-assets
+Trigger inspect-assets workflow
